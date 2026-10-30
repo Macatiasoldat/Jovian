@@ -1,0 +1,41 @@
+name: Build plugin
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -B build -G "Visual Studio 17 2022" -A x64
+      - name: Build VST3
+        run: cmake --build build --config Release --target Jovian8_VST3 --parallel
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Jovian8-VST3-Windows-x64
+          path: build/Jovian8_artefacts/Release/VST3/
+
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -B build -G Xcode
+      - name: Build AU + VST3
+        run: cmake --build build --config Release --target Jovian8_AU Jovian8_VST3 --parallel
+      - name: Signature ad hoc
+        run: |
+          codesign --force --deep --sign - build/Jovian8_artefacts/Release/AU/Jovian8.component
+          codesign --force --deep --sign - build/Jovian8_artefacts/Release/VST3/Jovian8.vst3
+      - name: Archive
+        run: |
+          mkdir out
+          ditto -c -k --keepParent build/Jovian8_artefacts/Release/AU/Jovian8.component out/Jovian8-AU-macOS.zip
+          ditto -c -k --keepParent build/Jovian8_artefacts/Release/VST3/Jovian8.vst3 out/Jovian8-VST3-macOS.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Jovian8-macOS-AU-VST3
+          path: out/
