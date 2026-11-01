@@ -148,6 +148,8 @@ struct Voice
     bool active = false, gate = false, sustained = false;
     int note = 60;
     uint32_t order = 0;
+    int part = 0;                 // partie (multitimbral) qui a joué cette voix
+    int midiCh = 0;               // canal MIDI d'origine (0..15)
     Patch pt;
     float vel = 0.f, freq = 440.f, sr = 44100.f, snote = 60.f;
     float panL = 0.7f, panR = 0.7f;
@@ -604,6 +606,17 @@ struct Chorus
         const float f = rp - fl;
         return b[(size_t) i0] + (b[(size_t) i1] - b[(size_t) i0]) * f;
     }
+    // version « bus » (multitimbral) : l'entrée est déjà mise à l'échelle par partie, on ne rend que le signal retardé
+    inline void wet (float l, float r, float& wl, float& wr)
+    {
+        bl[(size_t) w] = l; br[(size_t) w] = r;
+        const SineTable& sn = sineTab();
+        ph += 0.6f / sr; if (ph >= 1.f) ph -= 1.f;
+        const float m1 = sn (ph), m2 = sn (wrap1 (ph + 0.25f));
+        wl = tap (bl, (0.012f + 0.0035f * m1) * sr);
+        wr = tap (br, (0.014f + 0.0035f * m2) * sr);
+        w = (w + 1) & mask;
+    }
     inline void process (float& l, float& r, float mix)
     {
         bl[(size_t) w] = l; br[(size_t) w] = r;
@@ -669,6 +682,15 @@ struct Reverb
             ar[i].b.assign ((size_t) std::max (8, (int) ((at[i] + 23) * sc)), 0.f);
             al[i].i = ar[i].i = 0;
         }
+    }
+    // version « bus » : l'entrée est déjà multipliée par l'envoi de chaque partie
+    inline void wet (float l, float r, float& ol, float& orr)
+    {
+        const float in = (l + r) * 0.015f;
+        float wl = 0.f, wr = 0.f;
+        for (int i = 0; i < 8; ++i) { wl += cl[i].tick (in, fb, damp); wr += cr[i].tick (in, fb, damp); }
+        for (int i = 0; i < 4; ++i) { wl = al[i].tick (wl); wr = ar[i].tick (wr); }
+        ol = wl * 3.f; orr = wr * 3.f;
     }
     inline void process (float& l, float& r, float send)
     {

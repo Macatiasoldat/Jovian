@@ -16,6 +16,10 @@ jobs:
         run: |
           g++ -std=c++17 -O2 S90/tests/render_test.cpp -o render_test
           ./render_test | tail -5
+      - name: Test multitimbral (scènes, layers, splits, 16 parties)
+        run: |
+          g++ -std=c++17 -O2 S90/tests/multi_test.cpp -o multi_test
+          ./multi_test | tail -8
 
   windows:
     runs-on: windows-2022
