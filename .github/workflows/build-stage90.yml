@@ -1,0 +1,53 @@
+name: Build Stage90
+
+on:
+  push:
+    paths:
+      - 'S90/**'
+      - '.github/workflows/build-stage90.yml'
+  workflow_dispatch:
+
+jobs:
+  test-engine:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test du moteur (100 sons)
+        run: |
+          g++ -std=c++17 -O2 S90/tests/render_test.cpp -o render_test
+          ./render_test | tail -5
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S S90 -B build-s90 -G "Visual Studio 17 2022" -A x64
+      - name: Build VST3
+        run: cmake --build build-s90 --config Release --target Stage90_VST3 --parallel
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Stage90-VST3-Windows-x64
+          path: build-s90/Stage90_artefacts/Release/VST3/
+
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S S90 -B build-s90 -G Xcode
+      - name: Build AU + VST3
+        run: cmake --build build-s90 --config Release --target Stage90_AU Stage90_VST3 --parallel
+      - name: Signature ad hoc
+        run: |
+          codesign --force --deep --sign - build-s90/Stage90_artefacts/Release/AU/Stage90.component
+          codesign --force --deep --sign - build-s90/Stage90_artefacts/Release/VST3/Stage90.vst3
+      - name: Archive
+        run: |
+          mkdir out
+          ditto -c -k --keepParent build-s90/Stage90_artefacts/Release/AU/Stage90.component out/Stage90-AU-macOS.zip
+          ditto -c -k --keepParent build-s90/Stage90_artefacts/Release/VST3/Stage90.vst3 out/Stage90-VST3-macOS.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Stage90-macOS-AU-VST3
+          path: out/
