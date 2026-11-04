@@ -1,0 +1,115 @@
+name: Build Wavion
+
+on:
+  push:
+    paths:
+      - 'Wavion/**'
+      - '.github/workflows/build-wavion.yml'
+  workflow_dispatch:
+
+jobs:
+  test-engine:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test du moteur (tables, warps, filtres, unison, presets, anti-repliement)
+        run: |
+          g++ -std=c++17 -O2 -Wall -Wextra Wavion/tests/render_test.cpp -o wavion_test
+          ./wavion_test
+
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dépendances
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxext-dev \
+            libfreetype-dev libfontconfig1-dev libgl1-mesa-dev
+      - name: Configure
+        run: cmake -S Wavion -B build-wavion -DCMAKE_BUILD_TYPE=Release
+      - name: Build VST3 (vérification de compilation)
+        run: cmake --build build-wavion --target Wavion_VST3 --parallel
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Wavion-VST3-Linux-x64
+          path: build-wavion/Wavion_artefacts/Release/VST3/
+
+  windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S Wavion -B build-wavion -G "Visual Studio 17 2022" -A x64
+      - name: Build VST3 + Standalone (64 bits)
+        run: cmake --build build-wavion --config Release --target Wavion_VST3 Wavion_Standalone --parallel
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Wavion-VST3-Windows-x64
+          path: build-wavion/Wavion_artefacts/Release/VST3/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Wavion-Standalone-Windows-x64
+          path: build-wavion/Wavion_artefacts/Release/Standalone/
+
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S Wavion -B build-wavion -G Xcode
+      - name: Build AU + VST3 + Standalone (universel arm64 + x86_64)
+        run: cmake --build build-wavion --config Release --target Wavion_AU Wavion_VST3 Wavion_Standalone --parallel
+      - name: Signature ad hoc
+        run: |
+          codesign --force --deep --sign - build-wavion/Wavion_artefacts/Release/AU/Wavion.component
+          codesign --force --deep --sign - build-wavion/Wavion_artefacts/Release/VST3/Wavion.vst3
+          codesign --force --deep --sign - build-wavion/Wavion_artefacts/Release/Standalone/Wavion.app
+      - name: Validation Audio Unit (auval)
+        continue-on-error: true
+        run: |
+          mkdir -p ~/Library/Audio/Plug-Ins/Components
+          cp -R build-wavion/Wavion_artefacts/Release/AU/Wavion.component ~/Library/Audio/Plug-Ins/Components/
+          killall -9 AudioComponentRegistrar 2>/dev/null || true
+          auval -v aumu Wav1 Koal
+      - name: Archive
+        run: |
+          mkdir out
+          ditto -c -k --keepParent build-wavion/Wavion_artefacts/Release/AU/Wavion.component out/Wavion-AU-macOS.zip
+          ditto -c -k --keepParent build-wavion/Wavion_artefacts/Release/VST3/Wavion.vst3 out/Wavion-VST3-macOS.zip
+          ditto -c -k --keepParent build-wavion/Wavion_artefacts/Release/Standalone/Wavion.app out/Wavion-Standalone-macOS.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Wavion-macOS-AU-VST3
+          path: out/
+
+  # AAX : le SDK d'Avid n'est pas redistribuable. Ce job ne tourne que si vous avez :
+  #   - un dépôt PRIVÉ contenant le SDK AAX  -> variable de dépôt AAX_SDK_REPO  (ex. monpseudo/aax-sdk)
+  #   - un jeton d'accès à ce dépôt          -> secret AAX_SDK_TOKEN
+  #   - la variable de dépôt WAVION_BUILD_AAX = true
+  # Le .aaxplugin produit n'est pas signé : Pro Tools (version release) exige une signature PACE/iLok (wraptool).
+  aax:
+    if: ${{ vars.WAVION_BUILD_AAX == 'true' }}
+    strategy:
+      matrix:
+        os: [windows-2022, macos-14]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ vars.AAX_SDK_REPO }}
+          token: ${{ secrets.AAX_SDK_TOKEN }}
+          path: aax-sdk
+      - name: Configure (Windows)
+        if: runner.os == 'Windows'
+        run: cmake -S Wavion -B build-wavion -G "Visual Studio 17 2022" -A x64 -DWAVION_AAX_SDK_PATH="${{ github.workspace }}/aax-sdk"
+      - name: Configure (macOS)
+        if: runner.os == 'macOS'
+        run: cmake -S Wavion -B build-wavion -G Xcode -DWAVION_AAX_SDK_PATH="${{ github.workspace }}/aax-sdk"
+      - name: Build AAX
+        run: cmake --build build-wavion --config Release --target Wavion_AAX --parallel
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Wavion-AAX-${{ runner.os }}-unsigned
+          path: build-wavion/Wavion_artefacts/Release/AAX/
